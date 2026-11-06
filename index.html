@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Виртуальная лаборатория: Изотермический процесс</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Подключаем Pyodide -->
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.js"></script>
+</head>
+<body>
+    <h1>Изотермический процесс (T = const)</h1>
+    <div class="controls">
+        <label>Начальный объем (V1): <input type="range" id="v1" min="1" max="10" value="2" step="0.1"></label>
+        <label>Конечный объем (V2): <input type="range" id="v2" min="1" max="10" value="8" step="0.1"></label>
+        <button id="calcBtn">Рассчитать и построить</button>
+    </div>
+    <canvas id="graphCanvas" width="600" height="400"></canvas>
+    <div id="output"></div>
+
+    <script>
+        async function main() {
+            // Загружаем Pyodide
+            let pyodide = await loadPyodide();
+            // Загружаем наш Python-скрипт
+            await pyodide.loadPackage("numpy"); // Если нужен numpy, можно подключить
+            const pythonCode = await (await fetch("main.py")).text();
+            await pyodide.runPythonAsync(pythonCode);
+
+            // Привязываем кнопку
+            document.getElementById('calcBtn').addEventListener('click', () => {
+                const v1 = parseFloat(document.getElementById('v1').value);
+                const v2 = parseFloat(document.getElementById('v2').value);
+                
+                // Вызываем Python-функцию, которую мы определили в main.py
+                // Pyodide позволяет вызывать функции из Python
+                let resultJson = pyodide.globals.get("calculate_isotherm")(v1, v2);
+                let result = JSON.parse(resultJson);
+                
+                // Рисуем график
+                drawGraph(result.v_data, result.p_data);
+            });
+        }
+
+        function drawGraph(vData, pData) {
+            const canvas = document.getElementById('graphCanvas');
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Простая система координат (масштабирование опустим для краткости)
+            const margin = 40;
+            const w = canvas.width - margin * 2;
+            const h = canvas.height - margin * 2;
+            
+            // Находим максимумы для масштаба
+            const maxV = Math.max(...vData);
+            const maxP = Math.max(...pData);
+
+            ctx.beginPath();
+            ctx.moveTo(margin, margin); // Ось Y
+            ctx.lineTo(margin, canvas.height - margin);
+            ctx.lineTo(canvas.width - margin, canvas.height - margin); // Ось X
+            ctx.strokeStyle = '#333';
+            ctx.stroke();
+
+            // Рисуем изотерму
+            ctx.beginPath();
+            ctx.strokeStyle = 'blue';
+            ctx.lineWidth = 2;
+            for (let i = 0; i < vData.length; i++) {
+                // Инвертируем Y, так как на канвасе (0,0) вверху
+                const x = margin + (vData[i] / maxV) * w;
+                const y = canvas.height - margin - (pData[i] / maxP) * h;
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+
+            // Подписи осей
+            ctx.fillStyle = '#000';
+            ctx.fillText("V (Объем)", canvas.width / 2, canvas.height - 10);
+            ctx.save();
+            ctx.translate(10, canvas.height / 2);
+            ctx.rotate(-Math.PI / 2);
+            ctx.fillText("P (Давление)", 0, 0);
+            ctx.restore();
+        }
+
+        main();
+    </script>
+</body>
+</html>
