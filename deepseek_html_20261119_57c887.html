@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Maxwell Wave Lab — 3D</title>
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.26.2/full/pyodide.js"></script>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      max-width: 1100px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      background: #0f1115;
+      color: #e6e6e6;
+    }
+    h1 {
+      font-weight: 400;
+      border-bottom: 1px solid #333;
+      padding-bottom: .5rem;
+    }
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1.2rem;
+      margin: 1.5rem 0;
+    }
+    label {
+      display: flex;
+      flex-direction: column;
+      gap: .3rem;
+      font-size: .9rem;
+      color: #aaa;
+    }
+    input[type=range] { width: 100%; }
+    .value {
+      color: #7dd3fc;
+      font-variant-numeric: tabular-nums;
+    }
+    button {
+      background: #2563eb;
+      color: white;
+      border: none;
+      padding: .7rem 1.5rem;
+      border-radius: 6px;
+      font-size: 1rem;
+      cursor: pointer;
+      margin-bottom: 1rem;
+    }
+    button:hover { background: #1d4ed8; }
+    button:disabled { background: #333; cursor: wait; }
+    #status {
+      margin: .5rem 0 1rem;
+      color: #fbbf24;
+      font-size: .9rem;
+      min-height: 1.2em;
+    }
+    #plot {
+      background: white;
+      border-radius: 8px;
+      padding: .5rem;
+      min-height: 400px;
+    }
+    .hint {
+      color: #888;
+      font-size: .85rem;
+      margin-top: .5rem;
+    }
+  </style>
+</head>
+<body>
+
+<h1>⚡ Maxwell Wave Lab — 3D</h1>
+<p style="color:#aaa">
+  Плоская электромагнитная волна. Крутите ползунки — Python в браузере пересчитает поля.
+  График можно вращать мышкой.
+</p>
+
+<div class="controls">
+  <label>Частота f, ТГц <span class="value" id="fVal">500</span>
+    <input type="range" id="freq" min="100" max="1000" value="500" step="10">
+  </label>
+  <label>Амплитуда E₀, В/м <span class="value" id="eVal">1.0</span>
+    <input type="range" id="amp" min="0.1" max="2" value="1.0" step="0.1">
+  </label>
+  <label>Фаза E–B, ° <span class="value" id="phVal">0</span>
+    <input type="range" id="phase" min="0" max="180" value="0" step="10">
+  </label>
+  <label>Показатель преломления n <span class="value" id="nVal">1.0</span>
+    <input type="range" id="n" min="1" max="3" value="1.0" step="0.05">
+  </label>
+</div>
+
+<button id="runBtn" onclick="updatePlot()" disabled>Загрузка Python…</button>
+<div id="status"></div>
+<div id="plot"></div>
+<div class="hint">Вращение: зажмите левую кнопку мыши и двигайте. Зум: колесо мыши.</div>
+
+<script>
+let pyodideReady = false;
+let pyodide = null;
+
+async function main() {
+  document.getElementById('status').textContent = 'Загрузка Pyodide и библиотек (первый раз ~10–20 сек)…';
+  pyodide = await loadPyodide();
+  await pyodide.loadPackage(['numpy', 'plotly']);
+  pyodideReady = true;
+  document.getElementById('status').textContent = 'Готово. Двигайте ползунки и нажимайте кнопку.';
+  document.getElementById('runBtn').disabled = false;
+  document.getElementById('runBtn').textContent = 'Обновить график';
+
+  ['freq','amp','phase','n'].forEach(id => {
+    document.getElementById(id).addEventListener('input', () => {
+      document.getElementById('fVal').textContent = document.getElementById('freq').value;
+      document.getElementById('eVal').textContent = document.getElementById('amp').value;
+      document.getElementById('phVal').textContent = document.getElementById('phase').value;
+      document.getElementById('nVal').textContent = document.getElementById('n').value;
+    });
+  });
+
+  // Первый расчёт после загрузки
+  updatePlot();
+}
+
+async function updatePlot() {
+  if (!pyodideReady) return;
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true;
+  document.getElementById('status').textContent = 'Считаем…';
+
+  const freq = parseFloat(document.getElementById('freq').value);
+  const amp = parseFloat(document.getElementById('amp').value);
+  const phaseDeg = parseFloat(document.getElementById('phase').value);
+  const n = parseFloat(document.getElementById('n').value);
+
+  const pythonCode = `
+import numpy as np
+import plotly.graph_objects as go
+
+# Параметры из JS
+f = ${freq} * 1e12          # Гц
+E0 = ${amp}                 # В/м
+phase = np.deg2rad(${phaseDeg})
+n = ${n}                    # показатель преломления
+
+c = 3e8                     # скорость света в вакууме
+v = c / n                   # фазовая скорость в среде
+lam = c / f / n             # длина волны в среде
+
+# Ось распространения z: 2 длины волны
+z = np.linspace(0, 2 * lam, 400)
+k = 2 * np.pi / lam
+omega = 2 * np.pi * f
+t = 0
+
+# Поля плоской волны
+E = E0 * np.cos(k * z - omega * t)
+B = (E0 / v) * np.cos(k * z - omega * t + phase)
+
+# Нормируем B для наглядности (иначе оно в 3e8 раз меньше E)
+B_plot = B * v
+
+fig = go.Figure()
+
+# Вектор E — колеблется по оси y (в плоскости x-z)
+fig.add_trace(go.Scatter3d(
+    x=z, y=E, z=np.zeros_like(z),
+    mode='lines',
+    name='E (электрическое поле)',
+    line=dict(color='#2563eb', width=5)
+))
+
+# Вектор B — колеблется по оси x (в плоскости y-z)
+fig.add_trace(go.Scatter3d(
+    x=z, y=np.zeros_like(z), z=B_plot,
+    mode='lines',
+    name='B (магнитное поле)',
+    line=dict(color='#dc2626', width=5)
+))
+
+# Стрелки Пойнтинга (несколько штук вдоль z)
+z_arrows = np.linspace(0, 2 * lam, 8)
+for zz in z_arrows:
+    ee = E0 * np.cos(k * zz - omega * t)
+    bb = (E0 / v) * np.cos(k * zz - omega * t + phase) * v
+    # Маленькая линия вдоль +z как индикатор направления энергии
+    fig.add_trace(go.Scatter3d(
+        x=[zz, zz + lam * 0.08],
+        y=[0, 0],
+        z=[0, 0],
+        mode='lines',
+        line=dict(color='#16a34a', width=2),
+        showlegend=False,
+        hoverinfo='skip'
+    ))
+
+fig.update_layout(
+    scene=dict(
+        xaxis_title='z (распространение)',
+        yaxis_title='E',
+        zaxis_title='B',
+        aspectmode='cube',
+        camera=dict(eye=dict(x=1.6, y=-1.6, z=0.9))
+    ),
+    legend=dict(x=0.02, y=0.98, bgcolor='rgba(255,255,255,0.85)'),
+    margin=dict(l=0, r=0, b=0, t=0),
+    paper_bgcolor='white',
+    plot_bgcolor='white'
+)
+
+# Возвращаем HTML-фрагмент (plotly.js подтянется с CDN)
+fig.to_html(full_html=False, include_plotlyjs='cdn')
+  `;
+
+  try {
+    const result = await pyodide.runPythonAsync(pythonCode);
+    document.getElementById('plot').innerHTML = result;
+    document.getElementById('status').textContent = '';
+  } catch (err) {
+    document.getElementById('status').textContent = 'Ошибка: ' + err;
+    console.error(err);
+  }
+  btn.disabled = false;
+}
+
+main();
+</script>
+</body>
+</html>
