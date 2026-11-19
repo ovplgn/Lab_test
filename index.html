@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <title>Maxwell Wave Lab — 3D</title>
   <script src="https://cdn.jsdelivr.net/pyodide/v0.26.2/full/pyodide.js"></script>
+  <!-- Plotly.js подключается напрямую в браузере, без Python-пакета -->
+  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
   <style>
     body {
       font-family: system-ui, sans-serif;
@@ -58,7 +60,7 @@
       background: white;
       border-radius: 8px;
       padding: .5rem;
-      min-height: 400px;
+      min-height: 500px;
     }
     .hint {
       color: #888;
@@ -71,8 +73,7 @@
 
 <h1>⚡ Maxwell Wave Lab — 3D</h1>
 <p style="color:#aaa">
-  Плоская электромагнитная волна. Крутите ползунки — Python в браузере пересчитает поля.
-  График можно вращать мышкой.
+  Плоская электромагнитная волна. Крутите ползунки — Python считает поля, Plotly рисует 3D.
 </p>
 
 <div class="controls">
@@ -93,16 +94,17 @@
 <button id="runBtn" onclick="updatePlot()" disabled>Загрузка Python…</button>
 <div id="status"></div>
 <div id="plot"></div>
-<div class="hint">Вращение: зажмите левую кнопку мыши и двигайте. Зум: колесо мыши.</div>
+<div class="hint">Вращение: зажмите левую кнопку мыши. Зум: колесо мыши.</div>
 
 <script>
 let pyodideReady = false;
 let pyodide = null;
 
 async function main() {
-  document.getElementById('status').textContent = 'Загрузка Pyodide и библиотек (первый раз ~10–20 сек)…';
+  document.getElementById('status').textContent = 'Загрузка Pyodide (первый раз ~10–20 сек)…';
   pyodide = await loadPyodide();
-  await pyodide.loadPackage(['numpy', 'plotly']);
+  // Загружаем только numpy, plotly больше не нужен
+  await pyodide.loadPackage(['numpy']);
   pyodideReady = true;
   document.getElementById('status').textContent = 'Готово. Двигайте ползунки и нажимайте кнопку.';
   document.getElementById('runBtn').disabled = false;
@@ -117,8 +119,7 @@ async function main() {
     });
   });
 
-  // Первый расчёт после загрузки
-  updatePlot();
+  updatePlot(); // первый расчёт
 }
 
 async function updatePlot() {
@@ -132,88 +133,99 @@ async function updatePlot() {
   const phaseDeg = parseFloat(document.getElementById('phase').value);
   const n = parseFloat(document.getElementById('n').value);
 
+  // Python-код: только вычисления, возвращает JSON-строку с массивами
   const pythonCode = `
 import numpy as np
-import plotly.graph_objects as go
+import json
 
-# Параметры из JS
-f = ${freq} * 1e12          # Гц
-E0 = ${amp}                 # В/м
+f = ${freq} * 1e12
+E0 = ${amp}
 phase = np.deg2rad(${phaseDeg})
-n = ${n}                    # показатель преломления
+n = ${n}
 
-c = 3e8                     # скорость света в вакууме
-v = c / n                   # фазовая скорость в среде
-lam = c / f / n             # длина волны в среде
+c = 3e8
+v = c / n
+lam = c / f / n
 
-# Ось распространения z: 2 длины волны
 z = np.linspace(0, 2 * lam, 400)
 k = 2 * np.pi / lam
 omega = 2 * np.pi * f
 t = 0
 
-# Поля плоской волны
 E = E0 * np.cos(k * z - omega * t)
 B = (E0 / v) * np.cos(k * z - omega * t + phase)
+B_plot = B * v  # нормируем для наглядности
 
-# Нормируем B для наглядности (иначе оно в 3e8 раз меньше E)
-B_plot = B * v
-
-fig = go.Figure()
-
-# Вектор E — колеблется по оси y (в плоскости x-z)
-fig.add_trace(go.Scatter3d(
-    x=z, y=E, z=np.zeros_like(z),
-    mode='lines',
-    name='E (электрическое поле)',
-    line=dict(color='#2563eb', width=5)
-))
-
-# Вектор B — колеблется по оси x (в плоскости y-z)
-fig.add_trace(go.Scatter3d(
-    x=z, y=np.zeros_like(z), z=B_plot,
-    mode='lines',
-    name='B (магнитное поле)',
-    line=dict(color='#dc2626', width=5)
-))
-
-# Стрелки Пойнтинга (несколько штук вдоль z)
-z_arrows = np.linspace(0, 2 * lam, 8)
-for zz in z_arrows:
-    ee = E0 * np.cos(k * zz - omega * t)
-    bb = (E0 / v) * np.cos(k * zz - omega * t + phase) * v
-    # Маленькая линия вдоль +z как индикатор направления энергии
-    fig.add_trace(go.Scatter3d(
-        x=[zz, zz + lam * 0.08],
-        y=[0, 0],
-        z=[0, 0],
-        mode='lines',
-        line=dict(color='#16a34a', width=2),
-        showlegend=False,
-        hoverinfo='skip'
-    ))
-
-fig.update_layout(
-    scene=dict(
-        xaxis_title='z (распространение)',
-        yaxis_title='E',
-        zaxis_title='B',
-        aspectmode='cube',
-        camera=dict(eye=dict(x=1.6, y=-1.6, z=0.9))
-    ),
-    legend=dict(x=0.02, y=0.98, bgcolor='rgba(255,255,255,0.85)'),
-    margin=dict(l=0, r=0, b=0, t=0),
-    paper_bgcolor='white',
-    plot_bgcolor='white'
-)
-
-# Возвращаем HTML-фрагмент (plotly.js подтянется с CDN)
-fig.to_html(full_html=False, include_plotlyjs='cdn')
+# Возвращаем всё как JSON-строку, чтобы JS легко распарсил
+result = {
+    'z': z.tolist(),
+    'E': E.tolist(),
+    'B': B_plot.tolist(),
+    'lam': float(lam)
+}
+json.dumps(result)
   `;
 
   try {
-    const result = await pyodide.runPythonAsync(pythonCode);
-    document.getElementById('plot').innerHTML = result;
+    const resultJson = await pyodide.runPythonAsync(pythonCode);
+    const data = JSON.parse(resultJson);
+
+    // Строим 3D-график нативно через Plotly.js
+    const traceE = {
+      type: 'scatter3d',
+      mode: 'lines',
+      name: 'E (электрическое поле)',
+      x: data.z,
+      y: data.E,
+      z: new Array(data.z.length).fill(0),
+      line: { color: '#2563eb', width: 5 }
+    };
+
+    const traceB = {
+      type: 'scatter3d',
+      mode: 'lines',
+      name: 'B (магнитное поле)',
+      x: data.z,
+      y: new Array(data.z.length).fill(0),
+      z: data.B,
+      line: { color: '#dc2626', width: 5 }
+    };
+
+    // Зелёные штрихи вдоль z — индикатор направления Пойнтинга
+    const traces = [traceE, traceB];
+    const nArrows = 8;
+    const step = Math.floor(data.z.length / nArrows);
+    for (let i = 0; i < nArrows; i++) {
+      const idx = i * step;
+      const z0 = data.z[idx];
+      const z1 = z0 + data.lam * 0.08;
+      traces.push({
+        type: 'scatter3d',
+        mode: 'lines',
+        x: [z0, z1],
+        y: [0, 0],
+        z: [0, 0],
+        line: { color: '#16a34a', width: 2 },
+        showlegend: false,
+        hoverinfo: 'skip'
+      });
+    }
+
+    const layout = {
+      scene: {
+        xaxis: { title: 'z (распространение)' },
+        yaxis: { title: 'E' },
+        zaxis: { title: 'B' },
+        aspectmode: 'cube',
+        camera: { eye: { x: 1.6, y: -1.6, z: 0.9 } }
+      },
+      legend: { x: 0.02, y: 0.98, bgcolor: 'rgba(255,255,255,0.85)' },
+      margin: { l: 0, r: 0, b: 0, t: 0 },
+      paper_bgcolor: 'white',
+      plot_bgcolor: 'white'
+    };
+
+    Plotly.newPlot('plot', traces, layout, { responsive: true });
     document.getElementById('status').textContent = '';
   } catch (err) {
     document.getElementById('status').textContent = 'Ошибка: ' + err;
